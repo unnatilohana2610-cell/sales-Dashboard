@@ -1,0 +1,435 @@
+=== FILE: package.json ===
+
+{
+  "name": "sales-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.6.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.28",
+    "@types/react-dom": "^18.0.11",
+    "typescript": "^5.1.6",
+    "vite": "^5.0.0"
+  }
+}
+
+
+
+=== FILE: index.html ===
+
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sales Dashboard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+
+=== FILE: tsconfig.json ===
+
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "ESNext"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}
+
+
+
+=== FILE: src/main.tsx ===
+
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import './styles.css';
+
+const root = createRoot(document.getElementById('root')!);
+root.render(<App />);
+
+
+
+=== FILE: src/App.tsx ===
+
+import React, { useMemo, useState } from 'react';
+import { useSalesData } from './hooks/useSalesData';
+import { totalRevenue, salesByMonth, salesByRegion, topProducts } from './utils/aggregations';
+import { RevenueTrend } from './components/RevenueTrend';
+import { RegionPie } from './components/RegionPie';
+import { TopProductsBar } from './components/TopProductsBar';
+import { Filters } from './components/Filters';
+import { KPICard } from './components/KPICard';
+
+export default function App() {
+  const { sales, loading, error } = useSalesData();
+  const [regionFilter, setRegionFilter] = useState<string>('');
+  const [productFilter, setProductFilter] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
+  const filtered = useMemo(() => {
+    return sales.filter(s => {
+      if (regionFilter && s.region !== regionFilter) return false;
+      if (productFilter && s.product !== productFilter) return false;
+      if (startDate && new Date(s.date) < new Date(startDate)) return false;
+      if (endDate && new Date(s.date) > new Date(endDate)) return false;
+      return true;
+    });
+  }, [sales, regionFilter, productFilter, startDate, endDate]);
+
+  const revenue = totalRevenue(filtered);
+  const trend = salesByMonth(filtered);
+  const byRegion = salesByRegion(filtered);
+  const top = topProducts(filtered, 5, 'quantity');
+
+  if (loading) return <div className="p-6">Loading sales data...</div>;
+  if (error) return <div className="p-6">Error loading data: {String(error)}</div>;
+
+  const regions = Array.from(new Set(sales.map(s => s.region)));
+  const products = Array.from(new Set(sales.map(s => s.product)));
+
+  return (
+    <div className="container">
+      <header className="header">
+        <h1>Sales Dashboard</h1>
+        <div className="meta">Source API: mockapi</div>
+      </header>
+
+      <section className="kpis">
+        <KPICard title="Total Revenue" value={'₹' + revenue.toFixed(2)} />
+        <KPICard title="Number of Sales" value={filtered.length} />
+        <KPICard title="Avg Order Value" value={filtered.length ? '₹' + (revenue/filtered.length).toFixed(2) : '₹0.00'} />
+      </section>
+
+      <Filters
+        regions={regions}
+        products={products}
+        region={regionFilter}
+        setRegion={setRegionFilter}
+        product={productFilter}
+        setProduct={setProductFilter}
+        startDate={startDate}
+        setStartDate={setStartDate}
+        endDate={endDate}
+        setEndDate={setEndDate}
+      />
+
+      <section className="grid">
+        <div className="card">
+          <h2>Revenue Trend (monthly)</h2>
+          <RevenueTrend data={trend} />
+        </div>
+
+        <div className="card">
+          <h2>Sales by Region</h2>
+          <RegionPie data={byRegion} />
+        </div>
+
+        <div className="card wide">
+          <h2>Top 5 Products (by quantity)</h2>
+          <TopProductsBar data={top} />
+        </div>
+      </section>
+
+      <footer className="footer">
+        <small>Built for interview task — simple, clear, and extendable.</small>
+      </footer>
+    </div>
+  );
+}
+
+
+
+=== FILE: src/hooks/useSalesData.ts ===
+
+import { useEffect, useState } from 'react';
+import axios from 'axios';
+
+export type Sale = {
+  sale_id: string;
+  date: string;
+  region: string;
+  product: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+};
+
+const API_URL = 'https://68d424b8214be68f8c6887f1.mockapi.io/api/eureka/tech/task/sales';
+
+export function useSalesData() {
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await axios.get(API_URL);
+        const data = (res.data ?? []).map((r: any) => ({
+          ...r,
+          date: r.date,
+          quantity: Number(r.quantity),
+          unit_price: Number(r.unit_price),
+          total_price: Number(r.total_price)
+        }));
+        if (mounted) setSales(data);
+      } catch (err) {
+        if (mounted) setError(err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  return { sales, loading, error };
+}
+
+
+
+=== FILE: src/utils/aggregations.ts ===
+
+import { format } from 'date-fns';
+import type { Sale } from '../hooks/useSalesData';
+
+export const totalRevenue = (sales: Sale[]) =>
+  sales.reduce((acc, s) => acc + Number(s.total_price), 0);
+
+export const salesByMonth = (sales: Sale[]) => {
+  const map: Record<string, number> = {};
+  sales.forEach(s => {
+    let date = new Date(s.date);
+    if (isNaN(date.getTime())) date = new Date();
+    const key = format(date, 'yyyy-MM');
+    map[key] = (map[key] || 0) + Number(s.total_price);
+  });
+  return Object.entries(map)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, value]) => ({ month, value }));
+};
+
+export const salesByRegion = (sales: Sale[]) => {
+  const map: Record<string, number> = {};
+  sales.forEach(s => map[s.region] = (map[s.region] || 0) + Number(s.total_price));
+  return Object.entries(map).map(([region, value]) => ({ region, value }));
+};
+
+export const topProducts = (sales: Sale[], topN = 5, by: 'quantity' | 'revenue' = 'quantity') => {
+  const map: Record<string, { quantity: number; revenue: number }> = {};
+  sales.forEach(s => {
+    if (!map[s.product]) map[s.product] = { quantity: 0, revenue: 0 };
+    map[s.product].quantity += Number(s.quantity);
+    map[s.product].revenue += Number(s.total_price);
+  });
+  const arr = Object.entries(map).map(([product, v]) => ({
+    product,
+    quantity: v.quantity,
+    revenue: v.revenue
+  }));
+  return arr.sort((a,b) => (by==='quantity' ? b.quantity - a.quantity : b.revenue - a.revenue)).slice(0, topN);
+};
+
+
+
+=== FILE: src/components/KPICard.tsx ===
+
+import React from 'react';
+
+export const KPICard = ({ title, value }: { title: string; value: any }) => (
+  <div className="kpi">
+    <div className="kpi-title">{title}</div>
+    <div className="kpi-value">{String(value)}</div>
+  </div>
+);
+
+
+
+=== FILE: src/components/Filters.tsx ===
+
+import React from 'react';
+
+export const Filters = ({ regions, products, region, setRegion, product, setProduct, startDate, setStartDate, endDate, setEndDate }:
+  any) => {
+  return (
+    <div className="filters">
+      <select value={region} onChange={e => setRegion(e.target.value)}>
+        <option value=''>All Regions</option>
+        {regions.map((r: string) => <option key={r} value={r}>{r}</option>)}
+      </select>
+
+      <select value={product} onChange={e => setProduct(e.target.value)}>
+        <option value=''>All Products</option>
+        {products.map((p: string) => <option key={p} value={p}>{p}</option>)}
+      </select>
+
+      <label>
+        Start
+        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+      </label>
+
+      <label>
+        End
+        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+      </label>
+
+      <button onClick={() => { setRegion(''); setProduct(''); setStartDate(''); setEndDate(''); }}>Clear</button>
+    </div>
+  );
+};
+
+
+
+=== FILE: src/components/RevenueTrend.tsx ===
+
+import React from 'react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+
+export const RevenueTrend = ({ data }: { data: { month: string; value: number }[] }) => (
+  <div style={{ width: '100%', height: 300 }}>
+    <ResponsiveContainer>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="month" />
+        <YAxis />
+        <Tooltip />
+        <Line type="monotone" dataKey="value" stroke="#8884d8" strokeWidth={2} />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+
+
+=== FILE: src/components/RegionPie.tsx ===
+
+import React from 'react';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#aa47bc'];
+
+export const RegionPie = ({ data }: { data: { region: string; value: number }[] }) => (
+  <div style={{ width: '100%', height: 300 }}>
+    <ResponsiveContainer>
+      <PieChart>
+        <Pie dataKey="value" data={data} nameKey="region" outerRadius={100} fill="#8884d8">
+          {data.map((entry, index) => <Cell key={entry.region} fill={COLORS[index % COLORS.length]} />)}
+        </Pie>
+        <Tooltip />
+        <Legend />
+      </PieChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+
+
+=== FILE: src/components/TopProductsBar.tsx ===
+
+import React from 'react';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+
+export const TopProductsBar = ({ data }: { data: { product: string; quantity: number; revenue: number }[] }) => (
+  <div style={{ width: '100%', height: 300 }}>
+    <ResponsiveContainer>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="product" />
+        <YAxis />
+        <Tooltip />
+        <Bar dataKey="quantity" />
+      </BarChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+
+
+=== FILE: src/styles.css ===
+
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:0; padding:0; background:#f7fafc; color:#1a202c; }
+.container { max-width:1100px; margin:28px auto; padding:16px; }
+.header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.kpis { display:flex; gap:12px; margin-bottom:12px; }
+.kpi { background:white; padding:12px 16px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); flex:1; }
+.kpi-title { font-size:12px; color:#4a5568; }
+.kpi-value { font-size:20px; font-weight:600; margin-top:6px; }
+.filters { display:flex; gap:8px; margin-bottom:12px; align-items:center; flex-wrap:wrap; }
+.card { background:white; padding:12px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+.grid { display:grid; grid-template-columns: 2fr 1fr; gap:12px; }
+.card.wide { grid-column: 1 / -1; }
+.footer { margin-top:16px; text-align:center; color:#718096; }
+select, input[type=date], button { padding:8px; border-radius:6px; border:1px solid #e2e8f0; background:white; }
+
+
+
+=== FILE: README.md ===
+
+# Sales Dashboard (React + Vite)
+
+This repository contains a minimal React + TypeScript sales dashboard that visualizes sales data from the provided mock API:
+https://68d424b8214be68f8c6887f1.mockapi.io/api/eureka/tech/task/sales
+
+Features:
+- Total revenue (sum of total_price)
+- Sales trends over time (monthly line chart)
+- Sales distribution by region (pie chart)
+- Top 5 selling products (bar chart by quantity)
+- Basic filters: region, product, start date, end date
+
+## How to run locally
+
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Run development server:
+   ```bash
+   npm run dev
+   ```
+
+3. Open the app at `http://localhost:5173` (Vite default)
+
+## Notes
+- This project is intentionally minimal to be fast to deploy and easy to explain during interviews.
+- Aggregations are done client-side; for larger datasets, move aggregation to a backend.
+- Export/Download features not included in this minimal bundle but are straightforward to add (CSV, PDF snapshots).
+
+## Files included
+- `src/hooks/useSalesData.ts` — fetches and normalizes API data
+- `src/utils/aggregations.ts` — helper aggregations (totalRevenue, salesByMonth, etc.)
+- `src/components/*` — chart and UI components
+- `README.md` — this file
+
+## License
+MIT
+
+
+
